@@ -1,72 +1,151 @@
-import pickle
-from matplotlib import pyplot
-from sklearn.model_selection import train_test_split
-from tensorflow import keras as tfk
+import time
+import cv2
+import os
+import sys
+from PIL import Image
 import numpy as np
-from traffic import load_data
-from traffic import get_model
-from traffic import EPOCHS,batch_size
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.callbacks import TensorBoard
-import pandas as pd
-import time,os,sys
-from imblearn.over_sampling import SMOTE
-from collections import Counter
+from matplotlib import pyplot as plt
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.layers import MaxPooling2D
+from tensorflow.keras.layers import Activation
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.layers import Dense
+import tensorflow.keras as tfk
+from tensorflow.python.keras.callbacks import TensorBoard
 
+EPOCHS = 15
+IMG_WIDTH = 30
+IMG_HEIGHT = 30
+NUM_CATEGORIES = 43
+TEST_SIZE = 0.4
+batch_size = 16
+pool_size = (2, 2)
+inputShape = (IMG_WIDTH, IMG_HEIGHT, 3)
 Name = "trafficsSignsModel-{}".format(int(time.time()))
-checkPointModel = "Model-{}.h5".format(int(time.time()))
-modelName = "model{}.h5".format(int(time.time()))
-model = get_model()
-model.summary()
-images, labels = load_data(os.path.dirname(sys.argv[0]))
-labels = tfk.utils.to_categorical(labels)
-x_train, x_test, y_train, y_test = train_test_split(
-	np.array(images), np.array(labels), test_size=0.1,random_state=1)
-with open('test.pkl', 'wb') as f:
-	pickle.dump([x_test,y_test], f)
 
 
-filepath ="Saved_models_checkpoints/{}".format(checkPointModel)
-print(y_train.shape)
-nsamples, npx,npy,rgb = x_train.shape
+def main():
+	# Check command-line arguments
+	if len(sys.argv) not in [1, 3]:
+		sys.exit("Usage: python traffic.py data_directory [model.h5]")
 
-d2_train_x = x_train.reshape((nsamples,npx*npy*rgb))
+	# Get image arrays and labels for all image files
+	images, labels = load_data(os.path.dirname(sys.argv[0]))
 
-smote = SMOTE()
-X_train_smote, y_train_smote =smote.fit_sample(d2_train_x,y_train)
 
-df = pd.DataFrame({"label":np.argmax(y_train_smote,axis=1)})
-print(df['label'].value_counts())
+	# Split data into training and testing sets
+	labels = tfk.utils.to_categorical(labels)
+	x_train, x_test, y_train, y_test = train_test_split(
+		np.array(images), np.array(labels), test_size=TEST_SIZE)
 
-es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=2)
-M_checkP = ModelCheckpoint(filepath=filepath, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-tensorboard = TensorBoard(log_dir='logs/{}'.format(Name))
-# fit model
-history = model.fit(x_train, y_train_smote, validation_split=0.22222, epochs=EPOCHS, verbose=1,callbacks=[es,M_checkP,tensorboard],batch_size=batch_size)
-# evaluate the model
-_, train_acc = model.evaluate(x_train, y_train, verbose=0)
-_, test_acc = model.evaluate(x_test, y_test, verbose=0)
-if len(sys.argv) == 1:
-	folder_name = os.path.dirname(sys.argv[0])
-	saved_model = model.save(os.path.join(folder_name, "model2.h5"))
-	print(f"Model saved to {folder_name}.")
-print('Train accuracy : %.3f, Test accuracy: %.3f' % (train_acc, test_acc))
-# plot training history
-pyplot.figure(0)
-pyplot.plot(history.history['loss'], label='training loss')
-pyplot.plot(history.history['val_loss'], label='validation loss')
-pyplot.title("Loss")
-pyplot.xlabel("Epochs")
-pyplot.ylabel("loss")
-pyplot.legend()
-pyplot.show()
+	# Get a compiled neural network
+	model = get_model()
+	model.summary()
+	# Fit model on training data
+	tensorboard = TensorBoard(log_dir='logs/{}'.format(Name))
 
-pyplot.figure(1)
-pyplot.plot(history.history['accuracy'], label='training accuracy ')
-pyplot.plot(history.history['val_accuracy'],label='validation accuracy')
-pyplot.title("accuracy")
-pyplot.xlabel("Epochs")
-pyplot.ylabel("accu")
-pyplot.legend()
-pyplot.show()
+	history = model.fit(x_train, y_train, epochs=EPOCHS,callbacks=[tensorboard])
+
+	# Evaluate neural network performance
+	_,acc_train =model.evaluate(x_train, y_train, verbose=2)
+	_,acc_test = model.evaluate(x_test,y_test,verbose=2)
+	print('Train accuracy : %.3f, Test accuracy: %.3f' % (acc_train, acc_test))
+
+	# Save model to file
+	if len(sys.argv) == 1:
+		folder_name = os.path.dirname(sys.argv[0])
+		print(os.path.join(folder_name,"model1.h5"))
+		model.save(os.path.join(folder_name,"model1.h5"))
+		print(f"Model saved to {folder_name}.")
+		plt.figure(0)
+		plt.plot(history.history['loss'], label='training loss')
+		plt.title("Loss")
+		plt.xlabel("Epochs")
+		plt.ylabel("loss")
+		plt.legend()
+		plt.show()
+
+		plt.figure(1)
+		plt.plot(history.history['accuracy'], label='training accuracy ')
+		plt.title("accuracy")
+		plt.xlabel("Epochs")
+		plt.ylabel("accu")
+		plt.legend()
+		plt.show()
+
+
+def load_data(data_dir):
+	data = []
+	labels = []
+	for i in range(NUM_CATEGORIES):
+		path = os.path.join(data_dir, "gtsrb", str(i))
+		images = os.listdir(path)
+		for j in images:
+			try:
+				image = cv2.imread(os.path.join(path, j))
+				image_from_array = Image.fromarray(image, 'RGB')
+				resized_image = image_from_array.resize((IMG_HEIGHT, IMG_WIDTH))
+				data.append(np.array(resized_image))
+				labels.append(i)
+			except AttributeError:
+				print("Error loading the image!")
+
+	images_data = (data, labels)
+	return images_data
+
+
+def get_model():
+	# initialize the model along with the input shape to be
+	# "channels last" and the channels dimension itself
+	model = Sequential()
+	chDimension = -1
+	# 1 set of layers (CONV , RELU , BNormalization and POOL layers)
+	model.add(Conv2D(8, (5, 5), padding="same",input_shape=inputShape))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization(axis=chDimension))
+	model.add(MaxPooling2D(pool_size=(2, 2)))
+	# first 2 sets of layers 1st set (CONV , RELU ,) and another one of( CONV and RELU) then POOL layer
+	model.add(Conv2D(16, (3, 3), padding="same"))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization(axis=chDimension))
+	model.add(Conv2D(16, (3, 3), padding="same"))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization(axis=chDimension))
+	model.add(MaxPooling2D(pool_size=(2, 2)))
+	# second 2 second two sets of (CONV , RELU ,CONV  RELU) layers and POOL layer
+	model.add(Conv2D(32, (3, 3), padding="same"))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization(axis=chDimension))
+	model.add(Conv2D(32, (3, 3), padding="same"))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization(axis=chDimension))
+	model.add(MaxPooling2D(pool_size=(2, 2)))
+	# first set of fully connected layers , RELU layers
+	model.add(Flatten())
+	model.add(Dense(128))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization())
+	model.add(Dropout(0.7))
+	# second set of fully connected layers ,RELU layers
+	model.add(Flatten())
+	model.add(Dense(128))
+	model.add(Activation("relu"))
+	model.add(BatchNormalization())
+	model.add(Dropout(0.7))
+	# softmax classifier ,The softmax function is used as the activation function in the output layer of neural network models that predict a multinomial probability distribution.
+	# That is, softmax is used as the activation function for multi-class classification problems where class membership is required on more than two class labels.
+	model.add(Dense(NUM_CATEGORIES))
+	model.add(Activation("softmax"))
+
+	# compiling the model
+	model.compile(loss="categorical_crossentropy", optimizer='adam',metrics=["accuracy"])
+
+	return model
+
+
+if __name__ == "__main__":
+	main()
